@@ -2,6 +2,7 @@ package ru.singglerr.kontur.intern.redis.map;
 
 import org.junit.Assert;
 import org.junit.Test;
+import redis.clients.jedis.HostAndPort;
 
 import java.util.Collection;
 import java.util.Map;
@@ -11,10 +12,12 @@ import java.util.Set;
  * @author Danil Usov
  */
 public class RedisMapTest {
+    public static final HostAndPort SOCKET = new HostAndPort("192.168.1.49", 6379);
+
     @Test
     public void baseTests() {
-        Map<String, String> map1 = new RedisMap();
-        Map<String, String> map2 = new RedisMap();
+        Map<String, String> map1 = new RedisMap(SOCKET.getHost(), SOCKET.getPort());
+        Map<String, String> map2 = new RedisMap(SOCKET.getHost(), SOCKET.getPort());
 
         map1.put("one", "1");
 
@@ -41,5 +44,12 @@ public class RedisMapTest {
         Collection<String> values1 = map1.values();
         Assert.assertEquals(1, values1.size());
         Assert.assertTrue(values1.contains("first"));
+    }
+
+    @Test
+    public void test() {
+        Map<String, String> map1 = new RedisMap("name");
+        System.out.println("b068931c-c450-342b-a3f5-b3d276ea4297");
+        Map<String, String> map2 = new RedisMap("name1");
     }
 }

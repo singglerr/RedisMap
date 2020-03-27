@@ -1,51 +1,86 @@
 package ru.singglerr.kontur.intern.redis.map;
 
-import java.util.Collection;
-import java.util.Map;
-import java.util.Set;
+import redis.clients.jedis.Jedis;
+
+import java.util.*;
 
 /**
  * @author Danil Usov
  */
 public class RedisMap implements Map<String, String> {
+    private Jedis client;
+    private UUID uuid;
+    private String redisHKey;
+    private boolean isShared;
+
+    public RedisMap() {
+        client = new Jedis();
+        uuid = UUID.randomUUID();
+        redisHKey = uuid.toString();
+    }
+
+    public RedisMap(String sharedName) {
+        client = new Jedis();
+        uuid = UUID.randomUUID();
+        redisHKey = sharedName;
+        isShared = true;
+    }
+
+    public RedisMap(String host, int port) {
+        client = new Jedis(host, port);
+        uuid = UUID.randomUUID();
+        redisHKey = uuid.toString();
+    }
+
+    public RedisMap(String host, int port, String sharedName) {
+        client = new Jedis(host, port);
+        uuid = UUID.randomUUID();
+        redisHKey = sharedName;
+        isShared = true;
+    }
+
     @Override
     public int size() {
-        throw new UnsupportedOperationException();
+        return client.hlen(redisHKey).intValue();
     }
 
     @Override
     public boolean isEmpty() {
-        throw new UnsupportedOperationException();
+        return size() == 0;
     }
 
     @Override
     public boolean containsKey(Object key) {
-        throw new UnsupportedOperationException();
+        return client.hexists(redisHKey, key.toString());
     }
 
     @Override
     public boolean containsValue(Object value) {
-        throw new UnsupportedOperationException();
+        return client.hvals(redisHKey).contains(value);
     }
 
     @Override
     public String get(Object key) {
-        throw new UnsupportedOperationException();
+          return client.hget(redisHKey, key.toString());
     }
 
     @Override
     public String put(String key, String value) {
-        throw new UnsupportedOperationException();
+        String old = client.hget(redisHKey, key);
+        client.hset(redisHKey, key, value);
+        return old;
     }
 
     @Override
     public String remove(Object key) {
-        throw new UnsupportedOperationException();
+        String val = client.hget(redisHKey, key.toString());
+        client.hdel(redisHKey, key.toString());
+        return val;
     }
 
     @Override
     public void putAll(Map<? extends String, ? extends String> m) {
-        throw new UnsupportedOperationException();
+        client.hmset(redisHKey, (Map<String, String>) m);
     }
 
     @Override
