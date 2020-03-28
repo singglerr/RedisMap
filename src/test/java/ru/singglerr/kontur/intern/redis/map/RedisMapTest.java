@@ -4,15 +4,13 @@ import org.junit.Assert;
 import org.junit.Test;
 import redis.clients.jedis.HostAndPort;
 
-import java.util.Collection;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 /**
  * @author Danil Usov
  */
 public class RedisMapTest {
-    public static final HostAndPort SOCKET = new HostAndPort("192.168.1.49", 6379);
+    public static final HostAndPort SOCKET = new HostAndPort("192.168.8.171", 6379);
 
     @Test
     public void baseTests() {
@@ -48,8 +46,19 @@ public class RedisMapTest {
 
     @Test
     public void test() {
-        Map<String, String> map1 = new RedisMap("name");
-        System.out.println("b068931c-c450-342b-a3f5-b3d276ea4297");
-        Map<String, String> map2 = new RedisMap("name1");
+        Map<String, String> map = new HashMap<>();
+        map.put("a", "1");
+        System.out.println(map.toString());
+        Set<Map.Entry<String, String>> entries = map.entrySet();
+        for (Map.Entry<String, String> entry : entries) {
+            System.out.println(entry.toString());
+            entry.setValue("sfsdfsdfsdf");
+        }
+        System.out.println(map.toString());
+
+        List<String> list = new ArrayList<>();
+        list.add("a");
+        map.entrySet().removeAll(list);
+        System.out.println(map.toString());
     }
 }
