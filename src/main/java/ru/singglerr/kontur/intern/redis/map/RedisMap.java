@@ -1,44 +1,57 @@
 package ru.singglerr.kontur.intern.redis.map;
 
 import redis.clients.jedis.Jedis;
+import redis.clients.jedis.ScanResult;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.lang.ref.Cleaner;
 import java.util.*;
 
 /**
  * @author Danil Usov
  */
 public class RedisMap implements Map<String, String>, AutoCloseable {
+    private static final Cleaner cleaner = Cleaner.create();
+    private static final String CLIENTS_TAG = "clients";
+
     private Jedis client;
     private UUID uuid;
     private String redisHKey;
     private boolean isShared;
+    private Cleaner.Cleanable cleanable;
 
     public RedisMap() {
         client = new Jedis();
-        uuid = UUID.randomUUID();
-        redisHKey = uuid.toString();
+        init(null);
     }
 
     public RedisMap(String sharedName) {
         client = new Jedis();
-        uuid = UUID.randomUUID();
-        redisHKey = sharedName;
-        isShared = true;
+        init(sharedName);
     }
 
     public RedisMap(String host, int port) {
         client = new Jedis(host, port);
-        uuid = UUID.randomUUID();
-        redisHKey = uuid.toString();
+        init(null);
     }
 
     public RedisMap(String host, int port, String sharedName) {
         client = new Jedis(host, port);
+        init(sharedName);
+    }
+
+    private void init(String sharedName) {
         uuid = UUID.randomUUID();
-        redisHKey = sharedName;
-        isShared = true;
+        if (sharedName != null) {
+            redisHKey = sharedName;
+            isShared = true;
+            client.hset(CLIENTS_TAG + "-" + redisHKey, uuid.toString(), "1");
+        } else {
+            redisHKey = uuid.toString();
+        }
+
+        cleanable = cleaner.register(this, new RedisCleaner());
     }
 
     @Override
@@ -58,12 +71,12 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
 
     @Override
     public boolean containsValue(Object value) {
-        return client.hvals(redisHKey).contains(value);
+        return values().contains(value);
     }
 
     @Override
     public String get(Object key) {
-          return client.hget(redisHKey, key.toString());
+        return client.hget(redisHKey, key.toString());
     }
 
     @Override
@@ -81,6 +94,7 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public void putAll(Map<? extends String, ? extends String> m) {
         client.hmset(redisHKey, (Map<String, String>) m);
     }
@@ -102,24 +116,40 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
 
     @Override
     public Set<Entry<String, String>> entrySet() {
-        Set<Entry<String, String>> set = new HashSet<>();
-        for (String key : keySet()) {
-            set.add(new RedisEntry(key));
-        }
+        return new RedisEntrySet();
+    }
 
-        return new RedisEntrySet(set);
+    private class RedisCleaner implements Runnable {
+        @Override
+        public void run() {
+            if (isShared) {
+                client.hdel(CLIENTS_TAG + "-" + redisHKey, uuid.toString());
+                if (client.hlen(CLIENTS_TAG + "-" + redisHKey) == 0) {
+                    clear();
+                }
+            } else {
+                clear();
+            }
+
+            client.close();
+        }
     }
 
     @Override
     public void close() throws Exception {
-        clear();
-        client.close();
+        cleanable.clean();
     }
 
-    public class RedisEntry implements Entry<String, String> {
+    @Override
+    protected void finalize() throws Throwable {
+        close();
+        super.finalize();
+    }
+
+    class RedisEntry implements Entry<String, String> {
         private String key;
 
-        public RedisEntry(String key) {
+        RedisEntry(String key) {
             this.key = key;
         }
 
@@ -139,92 +169,87 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
             client.hset(redisHKey, key, value);
             return old;
         }
+
+        @Override
+        public String toString() {
+            return getKey() + "=" + getValue();
+        }
     }
 
-    private final class RedisEntrySet implements Set<Entry<String, String>> {
-        Set<Entry<String, String>> set;
-
-        public RedisEntrySet(Set<Entry<String, String>> set) {
-            this.set = set;
-        }
-
+    final class RedisEntrySet extends AbstractSet<Entry<String, String>> {
         @Override
         public int size() {
-            return set.size();
+            return RedisMap.this.size();
         }
 
         @Override
-        public boolean isEmpty() {
-            return set.isEmpty();
-        }
+        public final boolean contains(Object o) {
+            if (!(o instanceof Entry))
+                return false;
 
-        @Override
-        public boolean contains(Object o) {
-            return set.contains(o);
+            Map.Entry<?, ?> e = (Map.Entry<?, ?>) o;
+            return RedisMap.this.get(e.getKey()) != null;
         }
 
         @Override
         public Iterator<Entry<String, String>> iterator() {
-            return set.iterator();
-        }
-
-        @Override
-        public Object[] toArray() {
-            return set.toArray();
-        }
-
-        @Override
-        public <T> T[] toArray(T[] a) {
-            return set.toArray(a);
-        }
-
-        @Override
-        public boolean add(Entry<String, String> entry) {
-            return set.add(entry);
+            return new RedisEntryIterator();
         }
 
         @Override
         public boolean remove(Object o) {
-            return set.remove(o);
-        }
-
-        @Override
-        public boolean containsAll(Collection<?> c) {
-            return set.containsAll(c);
-        }
-
-        @Override
-        public boolean addAll(Collection<? extends Entry<String, String>> c) {
-            return set.addAll(c);
-        }
-
-        @Override
-        public boolean retainAll(Collection<?> c) {
-            boolean res = set.retainAll(c);
-            if (!res) {
+            if (!(o instanceof Entry))
                 return false;
-            }
 
-            Map<String, String> map = new HashMap<>();
-            for (Entry<String, String> entry : set) {
-                map.put(entry.getKey(), entry.getValue());
-            }
-
-            RedisMap.this.clear();
-            RedisMap.this.putAll(map);
-
-            return true;
-        }
-
-        @Override
-        public boolean removeAll(Collection<?> c) {
-            return set.removeAll(c);
+            Map.Entry<?, ?> e = (Map.Entry<?, ?>) o;
+            return RedisMap.this.remove(e.getKey()) != null;
         }
 
         @Override
         public void clear() {
-            set.clear();
             RedisMap.this.clear();
+        }
+    }
+
+    final class RedisEntryIterator implements Iterator<Entry<String, String>> {
+        private String cursor = "0";
+        private ScanResult<Entry<String, String>> result;
+        private Iterator<Map.Entry<String, String>> iteratorOfCurrentResult;
+        private Entry<String, String> currentEntry;
+
+        RedisEntryIterator() {
+            scan();
+        }
+
+        private void scan() {
+            result = client.hscan(redisHKey, cursor);
+            cursor = result.getCursor();
+            iteratorOfCurrentResult = result.getResult().iterator();
+        }
+
+        @Override
+        public Entry<String, String> next() {
+            if (!iteratorOfCurrentResult.hasNext()) {
+                scan();
+            }
+
+            Map.Entry<String, String> next = iteratorOfCurrentResult.next();
+            currentEntry = new RedisEntry(next.getKey());
+            return currentEntry;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return !result.isCompleteIteration() || iteratorOfCurrentResult.hasNext();
+        }
+
+        @Override
+        public void remove() {
+            if (currentEntry == null) {
+                throw new IllegalStateException();
+            }
+
+            RedisMap.this.remove(currentEntry.getKey());
         }
     }
 }

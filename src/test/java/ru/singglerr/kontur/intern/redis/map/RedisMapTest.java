@@ -42,23 +42,26 @@ public class RedisMapTest {
         Collection<String> values1 = map1.values();
         Assert.assertEquals(1, values1.size());
         Assert.assertTrue(values1.contains("first"));
+        map1 = null;
+        map2 = null;
+        System.gc();
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
     }
 
     @Test
     public void test() {
-        Map<String, String> map = new HashMap<>();
-        map.put("a", "1");
-        System.out.println(map.toString());
-        Set<Map.Entry<String, String>> entries = map.entrySet();
-        for (Map.Entry<String, String> entry : entries) {
-            System.out.println(entry.toString());
-            entry.setValue("sfsdfsdfsdf");
-        }
-        System.out.println(map.toString());
+        Map<String, String> map = new RedisMap();
+        map.put("count", "1");
+        map.put("lasdlas", "2");
+        map.put("чxcvxcv", "3");
+        map.put("qweqweqe", "4");
 
-        List<String> list = new ArrayList<>();
-        list.add("a");
-        map.entrySet().removeAll(list);
-        System.out.println(map.toString());
+        for (Map.Entry<String, String> entry : map.entrySet()) {
+            System.out.println(entry.toString());
+        }
     }
 }
