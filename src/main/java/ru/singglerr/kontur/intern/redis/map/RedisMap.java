@@ -41,19 +41,6 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
         init(sharedName);
     }
 
-    private void init(String sharedName) {
-        uuid = UUID.randomUUID();
-        if (sharedName != null) {
-            redisHKey = sharedName;
-            isShared = true;
-            client.hset(CLIENTS_TAG + "-" + redisHKey, uuid.toString(), "1");
-        } else {
-            redisHKey = uuid.toString();
-        }
-
-        cleanable = cleaner.register(this, new RedisCleaner());
-    }
-
     @Override
     public int size() {
         return client.hlen(redisHKey).intValue();
@@ -114,9 +101,17 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
         return client.hvals(redisHKey);
     }
 
-    @Override
-    public Set<Entry<String, String>> entrySet() {
-        return new RedisEntrySet();
+    private void init(String sharedName) {
+        uuid = UUID.randomUUID();
+        if (sharedName != null) {
+            redisHKey = sharedName;
+            isShared = true;
+            client.hset(CLIENTS_TAG + "-" + redisHKey, uuid.toString(), "1");
+        } else {
+            redisHKey = uuid.toString();
+        }
+
+        cleanable = cleaner.register(this, new RedisCleaner());
     }
 
     private class RedisCleaner implements Runnable {
@@ -141,9 +136,8 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
     }
 
     @Override
-    protected void finalize() throws Throwable {
-        close();
-        super.finalize();
+    public Set<Entry<String, String>> entrySet() {
+        return new RedisEntrySet();
     }
 
     class RedisEntry implements Entry<String, String> {
@@ -221,12 +215,6 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
             scan();
         }
 
-        private void scan() {
-            result = client.hscan(redisHKey, cursor);
-            cursor = result.getCursor();
-            iteratorOfCurrentResult = result.getResult().iterator();
-        }
-
         @Override
         public Entry<String, String> next() {
             if (!iteratorOfCurrentResult.hasNext()) {
@@ -250,6 +238,18 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
             }
 
             RedisMap.this.remove(currentEntry.getKey());
+        }
+
+        @Override
+        protected void finalize() throws Throwable {
+            close();
+            super.finalize();
+        }
+
+        private void scan() {
+            result = client.hscan(redisHKey, cursor);
+            cursor = result.getCursor();
+            iteratorOfCurrentResult = result.getResult().iterator();
         }
     }
 }
