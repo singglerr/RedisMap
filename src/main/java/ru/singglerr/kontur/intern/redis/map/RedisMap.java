@@ -18,6 +18,36 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
     private String redisHKey;
     private Cleaner.Cleanable cleanable;
 
+    class RedisEntry implements Entry<String, String> {
+        private String key;
+
+        RedisEntry(String key) {
+            this.key = key;
+        }
+
+        @Override
+        public String getKey() {
+            return key;
+        }
+
+        @Override
+        public String getValue() {
+            return client.hget(redisHKey, key);
+        }
+
+        @Override
+        public String setValue(String value) {
+            String old = getValue();
+            client.hset(redisHKey, key, value);
+            return old;
+        }
+
+        @Override
+        public String toString() {
+            return getKey() + "=" + getValue();
+        }
+    }
+
     public RedisMap() {
         client = new Jedis();
         init(null);
@@ -100,21 +130,70 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
 
     @Override
     public Set<String> keySet() {
-        return client.hkeys(redisHKey);
+        return new KeySet();
+    }
+
+    final class KeySet extends AbstractSet<String> {
+        @Override
+        public Iterator<String> iterator() {
+            return new KeyRedisIterator();
+        }
+
+        @Override
+        public int size() {
+            return RedisMap.this.size();
+        }
+
+        @Override
+        public void clear() {
+            RedisMap.this.clear();
+        }
+
+        @Override
+        public boolean remove(Object o) {
+            return RedisMap.this.remove(o) != null;
+        }
+
+        @Override
+        public boolean contains(Object o) {
+            return RedisMap.this.containsKey(o);
+        }
     }
 
     @Override
     public Collection<String> values() {
-        return client.hvals(redisHKey);
+        return new Values();
     }
 
-    private static class RedisCleaner implements Runnable {
+    final class Values extends AbstractCollection<String> {
+        @Override
+        public Iterator<String> iterator() {
+            return new ValueRedisIterator();
+        }
+
+        @Override
+        public int size() {
+            return RedisMap.this.size();
+        }
+
+        @Override
+        public void clear() {
+            RedisMap.this.clear();
+        }
+    }
+
+    @Override
+    public void close() throws Exception {
+        cleanable.clean();
+    }
+
+    static class RedisCleaner implements Runnable {
         private boolean isShared;
         private String redisHKey;
         private Jedis client;
         private UUID uuid;
 
-        public RedisCleaner(boolean isShared, String redisHKey, Jedis client, UUID uuid) {
+        RedisCleaner(boolean isShared, String redisHKey, Jedis client, UUID uuid) {
             this.isShared = isShared;
             this.redisHKey = redisHKey;
             this.client = client;
@@ -132,49 +211,12 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
             } else {
                 client.del(redisHKey);
             }
-
-            client.close();
         }
-    }
-
-    @Override
-    public void close() throws Exception {
-        cleanable.clean();
     }
 
     @Override
     public Set<Entry<String, String>> entrySet() {
         return new RedisEntrySet();
-    }
-
-    class RedisEntry implements Entry<String, String> {
-        private String key;
-
-        RedisEntry(String key) {
-            this.key = key;
-        }
-
-        @Override
-        public String getKey() {
-            return key;
-        }
-
-        @Override
-        public String getValue() {
-            return client.hget(redisHKey, key);
-        }
-
-        @Override
-        public String setValue(String value) {
-            String old = getValue();
-            client.hset(redisHKey, key, value);
-            return old;
-        }
-
-        @Override
-        public String toString() {
-            return getKey() + "=" + getValue();
-        }
     }
 
     final class RedisEntrySet extends AbstractSet<Entry<String, String>> {
@@ -188,8 +230,9 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
             if (!(o instanceof Entry))
                 return false;
 
-            Map.Entry<?, ?> e = (Map.Entry<?, ?>) o;
-            return RedisMap.this.get(e.getKey()) != null;
+            Entry<?, ?> e = (Entry<?, ?>) o;
+            String val = RedisMap.this.get(e.getKey());
+            return val != null && val.equals(e.getValue());
         }
 
         @Override
@@ -212,33 +255,30 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
         }
     }
 
-    final class EntryRedisIterator implements Iterator<Entry<String, String>> {
+    abstract class RedisIterator {
         private String cursor = "0";
         private ScanResult<Entry<String, String>> result;
-        private Iterator<Map.Entry<String, String>> iteratorOfCurrentResult;
+        private Iterator<Entry<String, String>> iteratorOfCurrentResult;
         private Entry<String, String> currentEntry;
 
-        EntryRedisIterator() {
+        RedisIterator() {
             scan();
         }
 
-        @Override
-        public Entry<String, String> next() {
+        final Entry<String, String> nextEntry() {
             if (!iteratorOfCurrentResult.hasNext()) {
                 scan();
             }
 
-            Map.Entry<String, String> next = iteratorOfCurrentResult.next();
+            Entry<String, String> next = iteratorOfCurrentResult.next();
             currentEntry = new RedisEntry(next.getKey());
             return currentEntry;
         }
 
-        @Override
         public boolean hasNext() {
             return !result.isCompleteIteration() || iteratorOfCurrentResult.hasNext();
         }
 
-        @Override
         public void remove() {
             if (currentEntry == null) {
                 throw new IllegalStateException();
@@ -251,6 +291,27 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
             result = client.hscan(redisHKey, cursor);
             cursor = result.getCursor();
             iteratorOfCurrentResult = result.getResult().iterator();
+        }
+    }
+
+    final class KeyRedisIterator extends RedisIterator implements Iterator<String> {
+        @Override
+        public String next() {
+            return nextEntry().getKey();
+        }
+    }
+
+    final class ValueRedisIterator extends RedisIterator implements Iterator<String> {
+        @Override
+        public String next() {
+            return nextEntry().getValue();
+        }
+    }
+
+    final class EntryRedisIterator extends RedisIterator implements Iterator<Entry<String, String>> {
+        @Override
+        public Entry<String, String> next() {
+            return nextEntry();
         }
     }
 
