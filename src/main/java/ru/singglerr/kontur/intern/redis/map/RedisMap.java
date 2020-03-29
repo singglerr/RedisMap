@@ -3,8 +3,6 @@ package ru.singglerr.kontur.intern.redis.map;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.ScanResult;
 
-import java.io.Closeable;
-import java.io.IOException;
 import java.lang.ref.Cleaner;
 import java.util.*;
 
@@ -18,7 +16,6 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
     private Jedis client;
     private UUID uuid;
     private String redisHKey;
-    private boolean isShared;
     private Cleaner.Cleanable cleanable;
 
     public RedisMap() {
@@ -26,8 +23,18 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
         init(null);
     }
 
+    public RedisMap(Jedis client) {
+        this.client = client;
+        init(null);
+    }
+
     public RedisMap(String sharedName) {
         client = new Jedis();
+        init(sharedName);
+    }
+
+    public RedisMap(Jedis client, String sharedName) {
+        this.client = client;
         init(sharedName);
     }
 
@@ -101,29 +108,29 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
         return client.hvals(redisHKey);
     }
 
-    private void init(String sharedName) {
-        uuid = UUID.randomUUID();
-        if (sharedName != null) {
-            redisHKey = sharedName;
-            isShared = true;
-            client.hset(CLIENTS_TAG + "-" + redisHKey, uuid.toString(), "1");
-        } else {
-            redisHKey = uuid.toString();
+    private static class RedisCleaner implements Runnable {
+        private boolean isShared;
+        private String redisHKey;
+        private Jedis client;
+        private UUID uuid;
+
+        public RedisCleaner(boolean isShared, String redisHKey, Jedis client, UUID uuid) {
+            this.isShared = isShared;
+            this.redisHKey = redisHKey;
+            this.client = client;
+            this.uuid = uuid;
         }
 
-        cleanable = cleaner.register(this, new RedisCleaner());
-    }
-
-    private class RedisCleaner implements Runnable {
         @Override
         public void run() {
             if (isShared) {
                 client.hdel(CLIENTS_TAG + "-" + redisHKey, uuid.toString());
                 if (client.hlen(CLIENTS_TAG + "-" + redisHKey) == 0) {
-                    clear();
+                    client.del(CLIENTS_TAG + "-" + redisHKey);
+                    client.del(redisHKey);
                 }
             } else {
-                clear();
+                client.del(redisHKey);
             }
 
             client.close();
@@ -187,7 +194,7 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
 
         @Override
         public Iterator<Entry<String, String>> iterator() {
-            return new RedisEntryIterator();
+            return new EntryRedisIterator();
         }
 
         @Override
@@ -205,13 +212,13 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
         }
     }
 
-    final class RedisEntryIterator implements Iterator<Entry<String, String>> {
+    final class EntryRedisIterator implements Iterator<Entry<String, String>> {
         private String cursor = "0";
         private ScanResult<Entry<String, String>> result;
         private Iterator<Map.Entry<String, String>> iteratorOfCurrentResult;
         private Entry<String, String> currentEntry;
 
-        RedisEntryIterator() {
+        EntryRedisIterator() {
             scan();
         }
 
@@ -240,16 +247,31 @@ public class RedisMap implements Map<String, String>, AutoCloseable {
             RedisMap.this.remove(currentEntry.getKey());
         }
 
-        @Override
-        protected void finalize() throws Throwable {
-            close();
-            super.finalize();
-        }
-
         private void scan() {
             result = client.hscan(redisHKey, cursor);
             cursor = result.getCursor();
             iteratorOfCurrentResult = result.getResult().iterator();
         }
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+        close();
+        super.finalize();
+    }
+
+    private void init(String sharedName) {
+        uuid = UUID.randomUUID();
+        Runnable cleanAction;
+        if (sharedName != null) {
+            redisHKey = sharedName;
+            client.hset(CLIENTS_TAG + "-" + redisHKey, uuid.toString(), "1");
+            cleanAction = new RedisCleaner(true, redisHKey, client, uuid);
+        } else {
+            redisHKey = uuid.toString();
+            cleanAction = new RedisCleaner(false, redisHKey, client, uuid);
+        }
+
+        cleanable = cleaner.register(this, cleanAction);
     }
 }
